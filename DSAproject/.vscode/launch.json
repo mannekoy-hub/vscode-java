@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "type": "java",
+            "name": "BudgetOptimizer",
+            "request": "launch",
+            "mainClass": "DSAproject.BudgetOptimizer",
+            "cwd": "${workspaceFolder}",
+            "classPaths": [
+                "$Auto",
+                "${workspaceFolder}/lib/sqlite-jdbc-3.54.1.0.jar"
+            ]
+        }
+    ]
+}

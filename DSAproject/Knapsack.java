@@ -31,3 +31,12 @@ public class Knapsack {
     }
     
 }
+
+/*my prof it want a GUI design like a fully App ready to market
+it has a dashboard.
+
+make the design like the picture on the right but make it unique.
+dont make it AI slop.
+dont make bugs and errrors
+dont change anything just update a GUI 
+your the one to decide on the UI/UX of our system App */
