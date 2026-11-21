@@ -9,16 +9,6 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 
-// ============================================================================
-//  BudgetDatabase  -  SQLite data layer for the Student Budget Optimizer
-//
-//  Creates budget.db automatically (in the folder the app is run from).
-//  Tables:
-//     settings(id, budget, daily)          -> always one row, id = 1
-//     expenses(id, name, cost, priority)
-//
-//  Needs the driver JAR in lib/ (sqlite-jdbc-3.54.1.0.jar).
-// ============================================================================
 public class BudgetDatabase {
 
     private static final String URL = "jdbc:sqlite:budget.db";
