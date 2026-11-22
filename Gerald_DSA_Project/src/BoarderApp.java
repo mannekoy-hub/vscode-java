@@ -227,6 +227,7 @@ public class BoarderApp extends JFrame {
         AdminApp.Btn out = new AdminApp.Btn("Logout", 1); out.addActionListener(e -> { timer.stop(); meId = 0; pin.setText(""); cards.show(root, "login"); });
         JPanel outRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0)); outRow.setOpaque(false); outRow.add(out); stack(p, outRow, 0);
 
+        
         ScrollPage page = new ScrollPage(); page.add(p, BorderLayout.NORTH);
         JScrollPane scroll = new JScrollPane(page, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.setBorder(null); scroll.setOpaque(false); scroll.getViewport().setBackground(AdminApp.CREAM);
@@ -256,6 +257,7 @@ public class BoarderApp extends JFrame {
             boolean past = i <= m;
             cell[i - 1].setIcon(new MarkIcon(n == 3 ? 1 : n > 0 ? 2 : past ? 3 : 0, n == 3 ? GOOD : n > 0 ? AMBER : past ? AdminApp.DANGER : IDLE, 16));
         }
+        
         StringBuilder s = new StringBuilder();
         for (int i = Shared.d.notifs.size() - 1; i >= 0; i--) {        // newest first
             Shared.Notif n = Shared.d.notifs.get(i);

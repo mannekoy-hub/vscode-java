@@ -228,6 +228,7 @@ public class BoardingDatabase {
             ps.setString(5, n.msg);
             ps.setString(6, n.due.toString());
             ps.setInt(7, n.sent);
+     
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (keys.next()) {

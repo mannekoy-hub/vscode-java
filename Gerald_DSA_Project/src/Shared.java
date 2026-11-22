@@ -210,6 +210,9 @@ public class Shared {
         load(); Boarder b = find(id);
         if (d.rate <= 0) return "Admin has not set the electricity rate yet.";
         List<Boarder> occ = occupants(b, y, m);                // the room shares one meter: the reading is saved for everyone in it
+        double[] have = roomReading(occ, y, m);                // shared room: the first reading of the month wins, roommates cannot change it
+        if (have != null && occ.size() > 1)
+            return "Your roommate already submitted " + have[1] + " (" + (have[1] - have[0]) + " kWh) for this month.";
         for (Boarder o : occ) if (isPaid(masks(o, y)[2], m)) return "Electricity for this month is already paid.";
         final double prev = roomPrev(occ, y, m);
         if (present < prev) return "Present reading cannot be lower than previous (" + prev + ").";
