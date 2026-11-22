@@ -3,7 +3,8 @@ import java.sql.SQLException;
 import java.time.*;
 import java.util.*;
 
-/** Shared.java - data file, billing logic and the 3 DSA algorithms.
+/** Shared.java - data file, billing logic and the 3 DSA algorithms
+ *  (Bitmask, Difference Map + Prefix Sum, Round Robin).
  *  Used by BOTH AdminApp and BoarderApp (this is what connects them). */
 public class Shared {
     static final String[] MONTHS = {"January","February","March","April","May","June","July",
@@ -61,33 +62,28 @@ public class Shared {
     static int countPaid(int mask) { return Integer.bitCount(mask); }
     static int[] masks(Boarder b, int y) { return b.masks.computeIfAbsent(y, k -> new int[3]); }
 
-    // ------------------------- ALGORITHM 2: INTERVAL TREE (room occupancy)
-    /** BST keyed by start date; each node keeps the max end date of its subtree so
-     *  branches that cannot overlap are skipped. */
-    static class IntervalTree {
-        class Node { long lo, hi, mx; Node l, r; Node(long a, long b) { lo = a; hi = b; mx = b; } }
-        Node root;
-        void insert(long lo, long hi) { root = ins(root, lo, hi); }
-        Node ins(Node n, long lo, long hi) {
-            if (n == null) return new Node(lo, hi);
-            if (lo < n.lo) n.l = ins(n.l, lo, hi); else n.r = ins(n.r, lo, hi);
-            n.mx = Math.max(n.mx, hi); return n;
-        }
-        int countOverlaps(long lo, long hi) { return cnt(root, lo, hi); }
-        int cnt(Node n, long lo, long hi) {
-            if (n == null || n.mx < lo) return 0;               // prune
-            int c = cnt(n.l, lo, hi);
-            if (n.lo <= hi && lo <= n.hi) c++;
-            if (n.lo <= hi) c += cnt(n.r, lo, hi);
-            return c;
-        }
-    }
+    // ------------- ALGORITHM 2: DIFFERENCE MAP + PREFIX SUM (room occupancy)
+    /** Every stay [moveIn, moveOut] adds +1 on its first day and -1 on the day after its last day
+     *  (a TreeMap keeps these change points sorted by date). A running prefix sum over the sorted
+     *  points gives how many beds are used on any day. The new boarder fits only if the busiest
+     *  day from their move-in onward still has a free bed. */
     static boolean roomHasSpace(String room, LocalDate moveIn) {
-        IntervalTree t = new IntervalTree(); long open = Long.MAX_VALUE / 2;
+        TreeMap<Long, Integer> diff = new TreeMap<>();
+        long open = Long.MAX_VALUE / 2;
         for (Boarder b : d.boarders)
-            if (b.active && b.room.equalsIgnoreCase(room))
-                t.insert(b.moveIn.toEpochDay(), b.moveOut == null ? open : b.moveOut.toEpochDay());
-        return t.countOverlaps(moveIn.toEpochDay(), open) < d.beds;
+            if (b.active && b.room.equalsIgnoreCase(room)) {
+                long lo = b.moveIn.toEpochDay(), hi = b.moveOut == null ? open : b.moveOut.toEpochDay();
+                diff.merge(lo, 1, Integer::sum);          // +1 when the stay starts
+                diff.merge(hi + 1, -1, Integer::sum);     // -1 the day after it ends
+            }
+        long q = moveIn.toEpochDay();
+        int run = 0, peak = 0;                            // run = prefix sum, peak = busiest day from q onward
+        for (Map.Entry<Long, Integer> e : diff.entrySet()) {
+            run += e.getValue();
+            if (e.getKey() <= q) peak = run;              // occupancy on the move-in day itself
+            else peak = Math.max(peak, run);              // occupancy changes later on
+        }
+        return peak < d.beds;
     }
 
     // ------------------------------------------------------------ boarders
@@ -112,7 +108,7 @@ public class Shared {
             case 1: case 4: {
                 String room = col == 1 ? v : b.room; LocalDate mi = b.moveIn;
                 if (col == 4) { try { mi = LocalDate.parse(v); } catch (Exception e) { return "Move-in date must be YYYY-MM-DD."; } }
-                b.active = false;                                   // leave self out of the overlap check
+                b.active = false;                                   // leave self out of the occupancy check
                 boolean ok = roomHasSpace(room, mi);
                 b.active = true;
                 if (!ok) return "Room " + room + " is full for that date.";
@@ -134,7 +130,7 @@ public class Shared {
     }
 
     // ------------------------------------------------------------- billing
-    // FIX: use the real length of the month (28/29/30/31) instead of capping the due day at 28.
+    // Uses the real length of the month (28/29/30/31) instead of capping the due day at 28.
     static LocalDate dueDate(int y, int m) { return LocalDate.of(y, m, Math.min(d.dueDay, YearMonth.of(y, m).lengthOfMonth())); }
 
     static double prevReading(Boarder b, int y, int m) {       // starting reading is 0
@@ -236,7 +232,7 @@ public class Shared {
         }
     }
 
-    // ------------------------- ALGORITHM 3: MIN-HEAP SCHEDULER (notifications)
+    // ------------------------- ALGORITHM 3: ROUND ROBIN (notifications)
     static boolean schedule(int y, int m) {
         boolean changed = false; LocalDateTime due = dueDate(y, m).atStartOfDay();
         String[] kinds = {"rem3", "rem1", "overdue"}; LocalDateTime[] when = {due.minusDays(3), due.minusDays(1), due.plusDays(1)};
@@ -250,24 +246,41 @@ public class Shared {
         }
         return changed;
     }
-    /** Pending notifications sit in a min-heap ordered by trigger time: only the top is checked. */
+    /** Each boarder has their own queue of due notifications. A ring of those queues is served in turns:
+     *  take ONE notification from the boarder at the front, then send that boarder to the back of the ring
+     *  (if they still have more). So every boarder gets a turn and nobody is starved. */
     static boolean deliverDue() {
-        PriorityQueue<Notif> heap = new PriorityQueue<>(Comparator.comparing((Notif n) -> n.due));
-        for (Notif n : d.notifs) if (n.sent == 0) heap.add(n);
-        boolean changed = false; LocalDateTime now = LocalDateTime.now();
-        while (!heap.isEmpty() && !heap.peek().due.isAfter(now)) {
-            Notif n = heap.poll(); changed = true; Boarder b = find(n.bid);
-            Bill bl = bill(b, n.year, n.month);
-            if (bl.full) { n.sent = 2; db(() -> BoardingDatabase.updateNotif(n)); continue; }               // already paid -> cancel reminder
-            StringBuilder s = new StringBuilder();
-            for (int k : bl.unpaid) s.append(s.length() > 0 ? ", " : "").append(KEYS[k]).append(" (")
-                    .append(Double.isNaN(bl.amt(k)) ? "reading needed" : peso(bl.amt(k))).append(")");
-            String pre = n.kind.equals("rem3") ? "Reminder (3 days left)" : n.kind.equals("rem1") ? "Reminder (due tomorrow)" : "OVERDUE";
-            n.msg = pre + ": " + MONTHS[n.month - 1] + " bill, due " + dueDate(n.year, n.month) + ". Unpaid: " + s;
-            n.sent = 1; db(() -> BoardingDatabase.updateNotif(n));
+        LocalDateTime now = LocalDateTime.now();
+        Map<Integer, List<Notif>> perBoarder = new LinkedHashMap<>();
+        for (Notif n : d.notifs)
+            if (n.sent == 0 && !n.due.isAfter(now))
+                perBoarder.computeIfAbsent(n.bid, k -> new ArrayList<>()).add(n);
+
+        ArrayDeque<ArrayDeque<Notif>> ring = new ArrayDeque<>();
+        for (List<Notif> list : perBoarder.values()) {
+            list.sort(Comparator.comparing((Notif n) -> n.due));          // oldest reminder first
+            ring.add(new ArrayDeque<>(list));
+        }
+        boolean changed = false;
+        while (!ring.isEmpty()) {
+            ArrayDeque<Notif> q = ring.poll();                             // boarder whose turn it is
+            deliverOne(q.poll()); changed = true;                          // serve one notification
+            if (!q.isEmpty()) ring.add(q);                                 // back of the ring for the next round
         }
         return changed;
     }
-    /** Reload shared file, schedule + deliver notifications, save only if something changed. */
+    /** Sends (or cancels, if already paid) a single notification. */
+    static void deliverOne(Notif n) {
+        Boarder b = find(n.bid);
+        Bill bl = bill(b, n.year, n.month);
+        if (bl.full) { n.sent = 2; db(() -> BoardingDatabase.updateNotif(n)); return; }                 // already paid -> cancel reminder
+        StringBuilder s = new StringBuilder();
+        for (int k : bl.unpaid) s.append(s.length() > 0 ? ", " : "").append(KEYS[k]).append(" (")
+                .append(Double.isNaN(bl.amt(k)) ? "reading needed" : peso(bl.amt(k))).append(")");
+        String pre = n.kind.equals("rem3") ? "Reminder (3 days left)" : n.kind.equals("rem1") ? "Reminder (due tomorrow)" : "OVERDUE";
+        n.msg = pre + ": " + MONTHS[n.month - 1] + " bill, due " + dueDate(n.year, n.month) + ". Unpaid: " + s;
+        n.sent = 1; db(() -> BoardingDatabase.updateNotif(n));
+    }
+    /** Reload shared data, schedule + deliver notifications. */
     static void tick(int y, int m) { load(); schedule(y, m); deliverDue(); }
 }
