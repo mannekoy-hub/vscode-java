@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"name": "Gerald_DSA_Project",
+			"path": "Gerald_DSA_Project"
+		},
+		{
+			"name": "Gerald-java-Boardinghouse-App",
+			"path": "../Gerald-java-Boardinghouse-App"
+		}
+	],
+	"settings": {
+		"java.project.referencedLibraries": [
+			"lib/**/*.jar"
+		]
+	}
+}

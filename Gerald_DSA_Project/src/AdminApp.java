@@ -12,6 +12,7 @@ import java.awt.print.Printable;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.List;
@@ -437,8 +438,8 @@ public class AdminApp extends JFrame {
         stats.add(stat("Unpaid", lUnpaid, GOLD, false));
         stats.add(stat("Overdue", lOver, DANGER, false));
         stats.add(stat("Collected", lGot, SAGE, true));
-        Btn bPaid = new Btn("Print paid", 1), bRcpt = new Btn("Print receipt", 1);
-        bPaid.addActionListener(e -> printPaid()); bRcpt.addActionListener(e -> printReceipt());
+        Btn bPaid = new Btn("Print status", 1), bRcpt = new Btn("Print receipt", 1);
+        bPaid.addActionListener(e -> printStatus()); bRcpt.addActionListener(e -> printReceipt());
         JPanel prow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0)); prow.setOpaque(false); prow.add(bRcpt); prow.add(bPaid);
         JPanel mid = new JPanel(new BorderLayout(0, 14)); mid.setOpaque(false); mid.add(prow, BorderLayout.NORTH); mid.add(stats);
         JPanel top = new JPanel(new BorderLayout(0, 18)); top.setOpaque(false);
@@ -456,7 +457,7 @@ public class AdminApp extends JFrame {
         int sel = dt.getSelectedRow() >= 0 ? dIds.get(dt.getSelectedRow()) : -1;
         dm.setRowCount(0); dIds.clear(); int paid = 0, unpaid = 0, over = 0; double got = 0;
         for (Shared.Boarder b : Shared.d.boarders) {
-            if (!b.active) continue; Shared.Bill bl = Shared.bill(b, y, m);
+            if (!Shared.showsIn(b, y, m)) continue; Shared.Bill bl = Shared.bill(b, y, m);
             if (bl.status.equals("Paid")) paid++; else if (bl.status.equals("Overdue")) over++; else unpaid++;
             for (int k = 0; k < 3; k++) if (bl.paid[k] && !Double.isNaN(bl.amt(k))) got += bl.amt(k);
             dIds.add(b.id);
@@ -478,39 +479,40 @@ public class AdminApp extends JFrame {
         int r = dt.getSelectedRow();
         if (r < 0) { JOptionPane.showMessageDialog(this, "Click a boarder row first."); return; }
         int y = ym(false), m = ym(true), id = dIds.get(r); Shared.Bill bl = Shared.bill(Shared.find(id), y, m);
-        if (bl.full) { JOptionPane.showMessageDialog(this, "Everything is already paid."); return; }
         JPanel p = new JPanel(new GridLayout(0, 1, 0, 6)); p.setBorder(new EmptyBorder(6, 6, 6, 6));
-        JLabel ask = new JLabel("Tick what the boarder paid in person:"); ask.setFont(sans(Font.BOLD, 13)); p.add(ask);
+        JLabel ask = new JLabel("Tick what the boarder paid in person (untick to undo):"); ask.setFont(sans(Font.BOLD, 13)); p.add(ask);
         JCheckBox[] cb = new JCheckBox[3];
-        for (int k : bl.unpaid) {
-            boolean ok = !Double.isNaN(bl.amt(k));
-            cb[k] = new JCheckBox(Shared.KEYS[k] + "   " + (ok ? Shared.peso(bl.amt(k)) : "(boarder has not submitted reading)")); cb[k].setEnabled(ok);
+        for (int k = 0; k < 3; k++) {
+            boolean has = !Double.isNaN(bl.amt(k));
+            cb[k] = new JCheckBox(Shared.KEYS[k] + "   " + (has ? Shared.peso(bl.amt(k)) : "(boarder has not submitted reading)"));
+            cb[k].setSelected(bl.paid[k]); cb[k].setEnabled(has || bl.paid[k]);
             cb[k].setOpaque(false); cb[k].setFocusPainted(false); p.add(cb[k]);
         }
         if (JOptionPane.showConfirmDialog(this, p, "Record payment", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
-        boolean[] items = new boolean[3]; for (int k = 0; k < 3; k++) items[k] = cb[k] != null && cb[k].isSelected();
+        boolean[] items = new boolean[3]; for (int k = 0; k < 3; k++) items[k] = cb[k].isSelected();
         Shared.pay(id, y, m, items); refresh();
     }
-
     JPanel boarders() {
         JPanel p = page();
         String[] lbl = {"Name", "Room", "PIN", "Rent", "Move-in"}, def = {"", "", "", "2000", LocalDate.now().toString()};
         JPanel fields = new JPanel(new GridLayout(1, 5, 12, 0)), btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         fields.setOpaque(false); btns.setOpaque(false);
         for (int i = 0; i < 5; i++) { f[i] = new RField(def[i], 9); fields.add(labeled(lbl[i], f[i])); }
-        Btn add = new Btn("Add boarder", 0), out = new Btn("Move out selected", 2), edit = new Btn("Edit selected", 1);
+        Btn add = new Btn("Add boarder", 0), out = new Btn("Move out selected", 2), edit = new Btn("Edit selected", 1), prt = new Btn("Print boarders", 1);
+        prt.addActionListener(e -> printBoarders());
         add.addActionListener(e -> {
             double rent; try { rent = Double.parseDouble(f[3].getText()); } catch (Exception ex) { err("Rent must be a number."); return; }
             String er = Shared.addBoarder(f[0].getText().trim(), f[1].getText().trim(), f[2].getText().trim(), rent, f[4].getText().trim());
             if (er != null) { err(er); return; } f[0].setText(""); f[2].setText(""); refresh();
         });
-        
+
         out.addActionListener(e -> {
             int r = bt.getSelectedRow();
-            if (r >= 0 && JOptionPane.showConfirmDialog(this, "Mark this boarder as moved out?", "Move out", JOptionPane.YES_NO_OPTION) == 0) { Shared.moveOut(bIds.get(r)); refresh(); }
+            String from = Shared.MONTHS[LocalDate.now().getMonthValue() - 1] + " " + LocalDate.now().getYear();
+            if (r >= 0 && JOptionPane.showConfirmDialog(this, "Mark this boarder as moved out?\nRecords from " + from + " onward will be removed.", "Move out", JOptionPane.YES_NO_OPTION) == 0) { Shared.moveOut(bIds.get(r)); refresh(); }
         });
         edit.addActionListener(e -> editDialog());
-        btns.add(add); btns.add(edit); btns.add(out);
+        btns.add(add); btns.add(edit); btns.add(out); btns.add(prt);
         Card form = new Card(new BorderLayout(0, 16), CARD, LINE, 26); form.setBorder(new EmptyBorder(18, 20, 18, 20));
         form.add(fields, BorderLayout.NORTH); form.add(btns, BorderLayout.SOUTH);
         JPanel top = new JPanel(new BorderLayout(0, 18)); top.setOpaque(false);
@@ -557,7 +559,10 @@ public class AdminApp extends JFrame {
         });
         JPanel saveRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0)); saveRow.setOpaque(false); saveRow.add(save);
         Card rates = new Card(new BorderLayout(0, 20), CARD, LINE, 26); rates.setBorder(new EmptyBorder(22, 24, 22, 24));
-        rates.add(g); rates.add(saveRow, BorderLayout.SOUTH);
+        Btn reset = new Btn("Reset all data", 2); reset.addActionListener(e -> resetDialog());
+        JPanel bottomRow = new JPanel(new BorderLayout()); bottomRow.setOpaque(false);
+        bottomRow.add(saveRow, BorderLayout.WEST); bottomRow.add(reset, BorderLayout.EAST);
+        rates.add(g); rates.add(bottomRow, BorderLayout.SOUTH);
 
         JLabel ct = new JLabel("Compute rate from main electric bill"), cs = new JLabel("Divide the total bill by the total kWh, then save the result as the rate above.");
         ct.setFont(serif(Font.PLAIN, 20)); ct.setForeground(INK); cs.setFont(sans(Font.PLAIN, 12)); cs.setForeground(MUTED);
@@ -576,6 +581,19 @@ public class AdminApp extends JFrame {
         p.add(top, BorderLayout.NORTH); return p;
     }
 
+    /** Settings page: wipes all boarders, payments, readings and reminders (settings are kept). Asks twice. */
+    void resetDialog() {
+        if (JOptionPane.showConfirmDialog(this,
+                "This will delete ALL boarders, payments, meter readings and notifications.\nYour settings (rent, water, rate...) are kept.\nThis cannot be undone. Continue?",
+                "Reset all data", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
+        String ans = JOptionPane.showInputDialog(this, "Type RESET to confirm:", "Reset all data", JOptionPane.WARNING_MESSAGE);
+        if (ans == null || !ans.trim().equals("RESET")) { JOptionPane.showMessageDialog(this, "Reset cancelled. Nothing was deleted."); return; }
+        try { Shared.resetAll(); } catch (RuntimeException ex) { err("Could not reset: " + ex.getMessage()); return; }
+        if (bt.isEditing()) bt.getCellEditor().cancelCellEditing();
+        dt.clearSelection(); bt.clearSelection(); refresh();
+        JOptionPane.showMessageDialog(this, "All data was reset.");
+    }
+
     // -------------------------------------------------------------- printing
     static String money(double v) { return Double.isNaN(v) ? "-" : Shared.peso(v); }
     static String today() { return LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d, yyyy")); }
@@ -584,39 +602,56 @@ public class AdminApp extends JFrame {
         g.setFont(fit(f, s)); g.drawString(s, right ? x - g.getFontMetrics().stringWidth(s) : x, y);
     }
 
-    /** One report page (or more, when there are many rows): title, table of rows, totals and page numbers. */
-    static class ReportPage implements Printable {
-        final String title, sub, footL, footR; final List<String[]> rows;
-        ReportPage(String title, String sub, List<String[]> rows, String footL, String footR) {
-            this.title = title; this.sub = sub; this.rows = rows; this.footL = footL; this.footR = footR;
+    /** Status report page(s): a PAID table and an UNPAID / OVERDUE table, laid out as one list of lines so they can flow across pages. */
+    static class StatusPage implements Printable {
+        static final int SECTION = 0, HEADER = 1, ROW = 2, TOTAL = 3, GAP = 4, NOTE = 5;
+        static class Line {
+            final int kind; final String[] c; final double[] fr; final int rightFrom;
+            Line(int kind, String[] c, double[] fr, int rightFrom) { this.kind = kind; this.c = c; this.fr = fr; this.rightFrom = rightFrom; }
         }
+        final String title, sub; final List<Line> lines;
+        StatusPage(String title, String sub, List<Line> lines) { this.title = title; this.sub = sub; this.lines = lines; }
+
+        /** Shortens s with "..." until it fits in maxW pixels. */
+        static String clip(Graphics2D g, String s, int maxW) {
+            if (g.getFontMetrics().stringWidth(s) <= maxW) return s;
+            while (s.length() > 1 && g.getFontMetrics().stringWidth(s + "...") > maxW) s = s.substring(0, s.length() - 1);
+            return s + "...";
+        }
+
         public int print(Graphics g0, PageFormat pf, int page) {
             int w = (int) pf.getImageableWidth(), h = (int) pf.getImageableHeight();
-            int top = 64, rh = 22, foot = 56, per = Math.max(1, (h - top - rh - foot) / rh);
-            int pages = Math.max(1, (rows.size() + per - 1) / per);
+            int top = 64, rh = 22, per = Math.max(1, (h - top - 30) / rh);
+            int pages = Math.max(1, (lines.size() + per - 1) / per);
             if (page >= pages) return NO_SUCH_PAGE;
             Graphics2D g = (Graphics2D) g0.create(); aa(g);
             g.translate((int) pf.getImageableX(), (int) pf.getImageableY()); g.setColor(Color.BLACK);
             ptext(g, title, serif(Font.BOLD, 18), 0, 20, false);
             g.setColor(Color.DARK_GRAY); ptext(g, sub, sans(Font.PLAIN, 10), 0, 38, false);
-            String[] cols = {"Name", "Room", "Rent", "Water", "Electricity", "Total"};
-            double[] fr = {0.26, 0.09, 0.16, 0.16, 0.16, 0.17};
-            int[] cx = new int[6], cw = new int[6]; int acc = 0;
-            for (int i = 0; i < 6; i++) { cx[i] = acc; cw[i] = (int) (w * fr[i]); acc += cw[i]; }
-            g.setColor(Color.BLACK);
-            for (int i = 0; i < 6; i++) ptext(g, cols[i], sans(Font.BOLD, 10), i < 2 ? cx[i] + 4 : cx[i] + cw[i] - 4, top + 14, i >= 2);
-            g.drawLine(0, top + rh - 4, w, top + rh - 4);
-            int from = page * per, to = Math.min(rows.size(), from + per);
-            for (int r = from; r < to; r++) {
-                int base = top + rh + (r - from) * rh + 15;
-                g.setColor(Color.BLACK);
-                for (int i = 0; i < 6; i++) ptext(g, rows.get(r)[i], sans(i == 0 ? Font.BOLD : Font.PLAIN, 10), i < 2 ? cx[i] + 4 : cx[i] + cw[i] - 4, base, i >= 2);
-                g.setColor(Color.LIGHT_GRAY); g.drawLine(0, base + 5, w, base + 5);
-            }
-            if (page == pages - 1) {                                            // totals on the last page
-                int fy = top + rh + (to - from) * rh + 22;
-                g.setColor(Color.BLACK); g.drawLine(0, fy - 14, w, fy - 14);
-                ptext(g, footL, sans(Font.BOLD, 11), 0, fy, false); ptext(g, footR, sans(Font.BOLD, 11), w, fy, true);
+            int from = page * per, to = Math.min(lines.size(), from + per);
+            for (int i = from; i < to; i++) {
+                Line ln = lines.get(i); int base = top + (i - from) * rh + 15;
+                if (ln.kind == GAP) continue;
+                if (ln.kind == SECTION) {
+                    g.setColor(Color.BLACK); ptext(g, ln.c[0], sans(Font.BOLD, 12), 0, base, false);
+                    continue;
+                }
+                if (ln.kind == NOTE) { g.setColor(Color.DARK_GRAY); ptext(g, ln.c[0], sans(Font.ITALIC, 9), 0, base, false); continue; }
+                if (ln.kind == TOTAL) {
+                    g.setColor(Color.BLACK); g.drawLine(0, base - 12, w, base - 12);
+                    ptext(g, ln.c[0], sans(Font.BOLD, 10), 0, base, false); ptext(g, ln.c[1], sans(Font.BOLD, 10), w, base, true);
+                    continue;
+                }
+                int acc = 0;
+                for (int k = 0; k < ln.c.length; k++) {
+                    int cx = acc, cw = (int) (w * ln.fr[k]); acc += cw;
+                    boolean right = k >= ln.rightFrom;
+                    Font fnt = fit(sans(ln.kind == HEADER || k == 0 ? Font.BOLD : Font.PLAIN, 10), ln.c[k]);
+                    g.setFont(fnt); g.setColor(Color.BLACK);
+                    String s = clip(g, ln.c[k], cw - 8);
+                    g.drawString(s, right ? cx + cw - 4 - g.getFontMetrics().stringWidth(s) : cx + 4, base);
+                }
+                g.setColor(ln.kind == HEADER ? Color.BLACK : Color.LIGHT_GRAY); g.drawLine(0, base + 5, w, base + 5);
             }
             g.setColor(Color.GRAY); String pn = "Page " + (page + 1) + " of " + pages;
             ptext(g, pn, sans(Font.PLAIN, 9), (w - g.getFontMetrics().stringWidth(pn)) / 2, h - 4, false);
@@ -651,25 +686,145 @@ public class AdminApp extends JFrame {
         }
     }
 
+    /** Boarder list page(s): Name, Room, Move-in, Move-out, Status, then a summary line. */
+    static class RosterPage implements Printable {
+        final String title, sub, footL, footR; final List<String[]> rows;
+        RosterPage(String title, String sub, List<String[]> rows, String footL, String footR) {
+            this.title = title; this.sub = sub; this.rows = rows; this.footL = footL; this.footR = footR;
+        }
+        public int print(Graphics g0, PageFormat pf, int page) {
+            int w = (int) pf.getImageableWidth(), h = (int) pf.getImageableHeight();
+            int top = 64, rh = 22, foot = 56, per = Math.max(1, (h - top - rh - foot) / rh);
+            int pages = Math.max(1, (rows.size() + per - 1) / per);
+            if (page >= pages) return NO_SUCH_PAGE;
+            Graphics2D g = (Graphics2D) g0.create(); aa(g);
+            g.translate((int) pf.getImageableX(), (int) pf.getImageableY()); g.setColor(Color.BLACK);
+            ptext(g, title, serif(Font.BOLD, 18), 0, 20, false);
+            g.setColor(Color.DARK_GRAY); ptext(g, sub, sans(Font.PLAIN, 10), 0, 38, false);
+            String[] cols = {"Name", "Room", "Move-in", "Move-out", "Status"};
+            double[] fr = {0.30, 0.12, 0.20, 0.20, 0.18};
+            int[] cx = new int[5]; int acc = 0;
+            for (int i = 0; i < 5; i++) { cx[i] = acc; acc += (int) (w * fr[i]); }
+            g.setColor(Color.BLACK);
+            for (int i = 0; i < 5; i++) ptext(g, cols[i], sans(Font.BOLD, 10), cx[i] + 4, top + 14, false);
+            g.drawLine(0, top + rh - 4, w, top + rh - 4);
+            int from = page * per, to = Math.min(rows.size(), from + per);
+            for (int r = from; r < to; r++) {
+                int base = top + rh + (r - from) * rh + 15;
+                g.setColor(Color.BLACK);
+                for (int i = 0; i < 5; i++) ptext(g, rows.get(r)[i], sans(i == 0 ? Font.BOLD : Font.PLAIN, 10), cx[i] + 4, base, false);
+                g.setColor(Color.LIGHT_GRAY); g.drawLine(0, base + 5, w, base + 5);
+            }
+            if (page == pages - 1) {                                            // summary on the last page
+                int fy = top + rh + (to - from) * rh + 22;
+                g.setColor(Color.BLACK); g.drawLine(0, fy - 14, w, fy - 14);
+                ptext(g, footL, sans(Font.BOLD, 11), 0, fy, false); ptext(g, footR, sans(Font.BOLD, 11), w, fy, true);
+            }
+            g.setColor(Color.GRAY); String pn = "Page " + (page + 1) + " of " + pages;
+            ptext(g, pn, sans(Font.PLAIN, 9), (w - g.getFontMetrics().stringWidth(pn)) / 2, h - 4, false);
+            g.dispose(); return PAGE_EXISTS;
+        }
+    }
+
     void sendToPrinter(Printable p, String jobName) {
         PrinterJob job = PrinterJob.getPrinterJob(); job.setJobName(jobName); job.setPrintable(p);
         if (!job.printDialog()) return;                                       // user pressed Cancel
         try { job.print(); } catch (PrinterException ex) { err("Could not print: " + ex.getMessage()); }
     }
 
-    /** Prints a report of every boarder who has fully paid for the month shown on the Dashboard. */
-    void printPaid() {
+    /** Prints the payment status for the month shown on the Dashboard: a PAID table, then an UNPAID / OVERDUE table. */
+    void printStatus() {
         int y = ym(false), m = ym(true); refresh();
-        List<String[]> rows = new ArrayList<>(); double sum = 0;
-        for (Shared.Boarder b : Shared.d.boarders) {
-            if (!b.active) continue; Shared.Bill bl = Shared.bill(b, y, m);
-            if (!bl.full) continue;
-            rows.add(new String[]{b.name, b.room, money(bl.amt(0)), money(bl.amt(1)), money(bl.amt(2)), Shared.peso(bl.total)}); sum += bl.total;
-        }
         String period = Shared.MONTHS[m - 1] + " " + y;
-        if (rows.isEmpty()) { JOptionPane.showMessageDialog(this, "No paid boarders for " + period + "."); return; }
-        sendToPrinter(new ReportPage("Paid boarders - " + period, "Printed " + today(), rows,
-                rows.size() + (rows.size() == 1 ? " paid boarder" : " paid boarders"), "Collected: " + Shared.peso(sum)), "Paid boarders " + period);
+        List<String[]> paidRows = new ArrayList<>(), dueRows = new ArrayList<>();
+        double paidSum = 0, dueSum = 0; boolean noReading = false;
+        for (Shared.Boarder b : Shared.d.boarders) {                                   // everyone who has paid in full
+            if (!Shared.showsIn(b, y, m)) continue; Shared.Bill bl = Shared.bill(b, y, m);
+            if (!bl.full) continue;
+            paidRows.add(new String[]{b.name, b.room, money(bl.amt(0)), money(bl.amt(1)), money(bl.amt(2)), Shared.peso(bl.total)}); paidSum += bl.total;
+        }
+        for (String want : new String[]{"Overdue", "Unpaid"})                          // overdue first, then unpaid
+            for (Shared.Boarder b : Shared.d.boarders) {
+                if (!Shared.showsIn(b, y, m)) continue; Shared.Bill bl = Shared.bill(b, y, m);
+                if (bl.full || !bl.status.equals(want)) continue;
+                StringBuilder items = new StringBuilder(); double due = 0;
+                for (int k : bl.unpaid) {
+                    items.append(items.length() > 0 ? ", " : "").append(Shared.KEYS[k]);
+                    if (Double.isNaN(bl.amt(k))) { items.append(" (no reading)"); noReading = true; } else due += bl.amt(k);
+                }
+                dueRows.add(new String[]{b.name, b.room, items.toString(), Shared.peso(due), bl.status}); dueSum += due;
+            }
+        if (paidRows.isEmpty() && dueRows.isEmpty()) { JOptionPane.showMessageDialog(this, "No boarders to print for " + period + "."); return; }
+
+        double[] frP = {0.26, 0.09, 0.16, 0.16, 0.16, 0.17}, frU = {0.22, 0.08, 0.34, 0.20, 0.16};
+        List<StatusPage.Line> ls = new ArrayList<>();
+        ls.add(new StatusPage.Line(StatusPage.SECTION, new String[]{"PAID (" + paidRows.size() + ")"}, null, 0));
+        if (paidRows.isEmpty()) ls.add(new StatusPage.Line(StatusPage.NOTE, new String[]{"Nobody has paid in full yet."}, null, 0));
+        else {
+            ls.add(new StatusPage.Line(StatusPage.HEADER, new String[]{"Name", "Room", "Rent", "Water", "Electricity", "Total"}, frP, 2));
+            for (String[] r : paidRows) ls.add(new StatusPage.Line(StatusPage.ROW, r, frP, 2));
+            ls.add(new StatusPage.Line(StatusPage.TOTAL, new String[]{paidRows.size() + (paidRows.size() == 1 ? " boarder" : " boarders"), "Collected: " + Shared.peso(paidSum)}, null, 0));
+        }
+        ls.add(new StatusPage.Line(StatusPage.GAP, new String[]{""}, null, 0));
+        ls.add(new StatusPage.Line(StatusPage.SECTION, new String[]{"UNPAID / OVERDUE (" + dueRows.size() + ")"}, null, 0));
+        if (dueRows.isEmpty()) ls.add(new StatusPage.Line(StatusPage.NOTE, new String[]{"Everyone has paid in full."}, null, 0));
+        else {
+            ls.add(new StatusPage.Line(StatusPage.HEADER, new String[]{"Name", "Room", "Unpaid items", "Amount due", "Status"}, frU, 3));
+            for (String[] r : dueRows) ls.add(new StatusPage.Line(StatusPage.ROW, r, frU, 3));
+            ls.add(new StatusPage.Line(StatusPage.TOTAL, new String[]{dueRows.size() + (dueRows.size() == 1 ? " boarder" : " boarders"), "Still to collect: " + Shared.peso(dueSum)}, null, 0));
+            if (noReading) ls.add(new StatusPage.Line(StatusPage.NOTE, new String[]{"Electricity marked \"no reading\" is not counted yet (the boarder has not submitted a reading)."}, null, 0));
+        }
+        sendToPrinter(new StatusPage("Payment status - " + period, "Printed " + today(), ls), "Payment status " + period);
+    }
+
+    /** Asks what to print (all boarders, or one month of a chosen year), then prints the boarder list. */
+    void printBoarders() {
+        refresh();
+        String[] opts = new String[13];
+        opts[0] = "Print all";
+        System.arraycopy(Shared.MONTHS, 0, opts, 1, 12);
+
+        JComboBox<String> pick = new JComboBox<>(opts);
+        styleCombo(pick);
+        pick.setSelectedIndex(LocalDate.now().getMonthValue());              // default = current month
+        JSpinner year = new JSpinner(new SpinnerNumberModel(LocalDate.now().getYear(), 2020, 2100, 1));
+        styleSpinner(year);
+        pick.addActionListener(e -> year.setEnabled(pick.getSelectedIndex() > 0));   // year not needed for "Print all"
+
+        JPanel p = new JPanel(new GridLayout(0, 1, 0, 6));
+        p.setBorder(new EmptyBorder(6, 6, 6, 6));
+        p.add(cap("What do you want to print?")); p.add(pick);
+        p.add(cap("Year")); p.add(year);
+        if (JOptionPane.showConfirmDialog(this, p, "Print boarders", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+
+        int choice = pick.getSelectedIndex();
+        List<String[]> rows = new ArrayList<>();
+        String period; int act = 0, gone = 0;
+
+        if (choice == 0) {                                                    // ---- everyone, ever
+            period = "All";
+            for (Shared.Boarder b : Shared.d.boarders) {
+                if (b.active) { rows.add(new String[]{b.name, b.room, String.valueOf(b.moveIn), "-", "Active"}); act++; }
+            }
+            for (Shared.Boarder b : Shared.d.boarders) {
+                if (!b.active) { rows.add(new String[]{b.name, b.room, String.valueOf(b.moveIn), String.valueOf(b.moveOut), "Moved out"}); gone++; }
+            }
+        } else {                                                              // ---- one month
+            int y = (Integer) year.getValue(), m = choice;
+            period = Shared.MONTHS[m - 1] + " " + y;
+            LocalDate first = YearMonth.of(y, m).atDay(1), last = YearMonth.of(y, m).atEndOfMonth();
+            for (Shared.Boarder b : Shared.d.boarders) {
+                if (b.moveIn == null || b.moveIn.isAfter(last)) continue;                 // not moved in yet
+                if (b.moveOut != null && b.moveOut.isBefore(first)) continue;             // already left
+                boolean left = b.moveOut != null && !b.moveOut.isAfter(last);             // left during this month
+                rows.add(new String[]{b.name, b.room, String.valueOf(b.moveIn), left ? String.valueOf(b.moveOut) : "-", left ? "Moved out" : "Active"});
+                if (left) gone++; else act++;
+            }
+        }
+
+        if (rows.isEmpty()) { JOptionPane.showMessageDialog(this, "No boarders to print for " + period + "."); return; }
+        sendToPrinter(new RosterPage("Boarders - " + period, "Printed " + today(), rows,
+                act + " active, " + gone + " moved out", "Total listed: " + rows.size()), "Boarders " + period);
     }
 
     /** Prints a receipt for the boarder selected in the Dashboard table (only when everything is paid). */

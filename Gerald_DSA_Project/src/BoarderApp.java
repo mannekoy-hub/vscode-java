@@ -5,8 +5,7 @@ import java.awt.event.*;
 import java.awt.geom.*;
 import java.time.LocalDate;
 
-/** BoarderApp.java - boarder GUI.  Run: java BoarderApp  (admin must add the boarder first)
- *  Shares its look (colours, fonts, buttons, fields) with AdminApp.java, so keep both files in the same folder. */
+
 public class BoarderApp extends JFrame {
     static final Color GOOD = new Color(0x1E7B45), AMBER = new Color(0xB57A0C), IDLE = new Color(0xB9B3A5);
 
@@ -227,7 +226,6 @@ public class BoarderApp extends JFrame {
         AdminApp.Btn out = new AdminApp.Btn("Logout", 1); out.addActionListener(e -> { timer.stop(); meId = 0; pin.setText(""); cards.show(root, "login"); });
         JPanel outRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0)); outRow.setOpaque(false); outRow.add(out); stack(p, outRow, 0);
 
-        
         ScrollPage page = new ScrollPage(); page.add(p, BorderLayout.NORTH);
         JScrollPane scroll = new JScrollPane(page, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.setBorder(null); scroll.setOpaque(false); scroll.getViewport().setBackground(AdminApp.CREAM);
@@ -238,7 +236,13 @@ public class BoarderApp extends JFrame {
     static JLabel text(String s, Font f, Color c, int align) { JLabel l = text(s, f, c); l.setHorizontalAlignment(align); return l; }
 
     void refresh() {
-        Shared.tick(y, m); Shared.Boarder b = Shared.find(meId); Shared.Bill bl = Shared.bill(b, y, m);
+        Shared.tick(y, m); Shared.Boarder b = Shared.find(meId);
+        if (b == null) {                                               // account no longer exists (e.g. the admin reset all data)
+            timer.stop(); meId = 0; pin.setText(""); cards.show(root, "login");
+            JOptionPane.showMessageDialog(this, "Your account no longer exists. Please ask your landlord.", "Logged out", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        Shared.Bill bl = Shared.bill(b, y, m);
         due.setText("Due date: " + Shared.dueDate(y, m));
         for (int k = 0; k < 3; k++) {
             double a = bl.amt(k);
@@ -257,7 +261,7 @@ public class BoarderApp extends JFrame {
             boolean past = i <= m;
             cell[i - 1].setIcon(new MarkIcon(n == 3 ? 1 : n > 0 ? 2 : past ? 3 : 0, n == 3 ? GOOD : n > 0 ? AMBER : past ? AdminApp.DANGER : IDLE, 16));
         }
-        
+
         StringBuilder s = new StringBuilder();
         for (int i = Shared.d.notifs.size() - 1; i >= 0; i--) {        // newest first
             Shared.Notif n = Shared.d.notifs.get(i);

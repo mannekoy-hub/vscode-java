@@ -3,9 +3,6 @@ import java.sql.SQLException;
 import java.time.*;
 import java.util.*;
 
-/** Shared.java - data file, billing logic and the 3 DSA algorithms
- *  (Bitmask, Difference Map + Prefix Sum, Round Robin).
- *  Used by BOTH AdminApp and BoarderApp (this is what connects them). */
 public class Shared {
     static final String[] MONTHS = {"January","February","March","April","May","June","July",
             "August","September","October","November","December"};
@@ -51,6 +48,8 @@ public class Shared {
             BoardingDatabase.saveSetting("due_day", dueDay); BoardingDatabase.saveSetting("beds", beds);
         });
     }
+    /** ADMIN only: deletes ALL boarders, payments, meter readings and notifications (the settings are kept). Cannot be undone. */
+    static void resetAll() { db(BoardingDatabase::clearAll); load(); }
     static String peso(double v) { return String.format(PESO + "%,.2f", v); }
     static Boarder find(int id) { for (Boarder b : d.boarders) if (b.id == id) return b; return null; }
 
@@ -122,7 +121,39 @@ public class Shared {
         }
         db(() -> BoardingDatabase.updateBoarder(b)); return null;
     }
-    static void moveOut(int id) { load(); Boarder b = find(id); if (b != null) { b.active = false; b.moveOut = LocalDate.now(); db(() -> BoardingDatabase.updateBoarder(b)); } }
+
+  
+    static boolean showsIn(Boarder b, int y, int m) {
+        if (b.active) return true;
+        if (b.moveIn == null || b.moveOut == null) return false;
+        LocalDate last = YearMonth.of(y, m).atEndOfMonth();
+        return !b.moveIn.isAfter(last) && last.isBefore(b.moveOut.withDayOfMonth(1));
+    }
+
+
+    static void moveOut(int id) {
+        load(); Boarder b = find(id); if (b == null) return;
+        b.active = false; b.moveOut = LocalDate.now();
+        int fromY = b.moveOut.getYear(), fromM = b.moveOut.getMonthValue();
+        List<Integer> changedYears = new ArrayList<>();
+        for (Map.Entry<Integer, int[]> e : b.masks.entrySet()) {              // clear paid marks from the move-out month onward
+            int yr = e.getKey(); if (yr < fromY) continue;
+            int[] mk = e.getValue(); boolean ch = false;
+            for (int k = 0; k < 3; k++)
+                for (int mo = (yr == fromY ? fromM : 1); mo <= 12; mo++)
+                    if (isPaid(mk[k], mo)) { mk[k] &= ~bit(mo); ch = true; }
+            if (ch) changedYears.add(yr);
+        }
+        List<Notif> cancel = new ArrayList<>();
+        for (Notif n : d.notifs)                                              // cancel reminders / payment messages from that month onward
+            if (n.bid == id && n.sent != 2 && n.year * 100 + n.month >= fromY * 100 + fromM) { n.sent = 2; cancel.add(n); }
+        db(() -> {
+            BoardingDatabase.updateBoarder(b);
+            for (int yr : changedYears) BoardingDatabase.saveMasks(id, yr, b.masks.get(yr));
+            for (Notif n : cancel) BoardingDatabase.updateNotif(n);
+        });
+    }
+
     static Boarder login(String name, String pin) {
         load();
         for (Boarder b : d.boarders) if (b.active && b.name.equalsIgnoreCase(name) && b.pin.equals(pin)) return b;
@@ -139,10 +170,7 @@ public class Shared {
         return best < 0 ? 0 : b.readings.get(best)[1];
     }
 
-    /** The rent is the price of the ROOM and is split equally between everyone sharing it that month.
-     *  People count if their stay overlaps the month (moved-out boarders still count for the months they lived there,
-     *  so old bills do not change). If the sharers have different rent values the highest one is the room price.
-     *  Money is split in whole centavos; any leftover centavos go to the lowest ids, so the shares add up exactly. */
+
     static double rentShare(Boarder b, int y, int m) {
         List<Boarder> occ = occupants(b, y, m); double price = b.rent;
         for (Boarder o : occ) price = Math.max(price, o.rent);
@@ -205,7 +233,7 @@ public class Shared {
     static String submitReading(int id, int y, int m, double present) {
         load(); Boarder b = find(id);
         if (d.rate <= 0) return "Admin has not set the electricity rate yet.";
-        List<Boarder> occ = occupants(b, y, m);                // the room shares one meter: the reading is saved for everyone in it
+        List<Boarder> occ = occupants(b, y, m);                
         double[] have = roomReading(occ, y, m);                // shared room: the first reading of the month wins, roommates cannot change it
         if (have != null && occ.size() > 1)
             return "Your roommate already submitted " + have[1] + " (" + (have[1] - have[0]) + " kWh) for this month.";
@@ -219,16 +247,37 @@ public class Shared {
         }
         return null;
     }
-    /** ADMIN only: payments are made in person. */
+   
     static void pay(int id, int y, int m, boolean[] items) {
         load(); Boarder b = find(id);
+        boolean undone = false;
         for (int k = 0; k < 3; k++) {
-            if (!items[k] || (k == 2 && roomReading(occupants(b, y, m), y, m) == null)) continue;
-            int[] mk = masks(b, y); mk[k] = mark(mk[k], m);
-            Notif n = new Notif(); n.bid = id; n.year = y; n.month = m; n.kind = "paid" + k; n.sent = 1; n.due = LocalDateTime.now();
-            n.msg = "Payment received: " + KEYS[k] + " for " + MONTHS[m - 1] + " " + y + ". Thank you!";
-            d.notifs.add(n);
-            db(() -> { BoardingDatabase.saveMasks(id, y, mk); BoardingDatabase.insertNotif(n); });
+            int[] mk = masks(b, y);
+            boolean now = isPaid(mk[k], m);
+            if (items[k] == now) continue;                                        
+            if (items[k]) {                                                     
+                if (k == 2 && roomReading(occupants(b, y, m), y, m) == null) continue;
+                mk[k] = mark(mk[k], m);
+                Notif n = new Notif(); n.bid = id; n.year = y; n.month = m; n.kind = "paid" + k; n.sent = 1; n.due = LocalDateTime.now();
+                n.msg = "Payment received: " + KEYS[k] + " for " + MONTHS[m - 1] + " " + y + ". Thank you!";
+                d.notifs.add(n);
+                db(() -> { BoardingDatabase.saveMasks(id, y, mk); BoardingDatabase.insertNotif(n); });
+            } else {                                                             
+                undone = true;
+                mk[k] &= ~bit(m);
+                final String kind = "paid" + k;
+                List<Notif> hide = new ArrayList<>();
+                for (Notif n : d.notifs)
+                    if (n.bid == id && n.year == y && n.month == m && n.kind.equals(kind) && n.sent == 1) { n.sent = 2; hide.add(n); }
+                db(() -> { BoardingDatabase.saveMasks(id, y, mk); for (Notif n : hide) BoardingDatabase.updateNotif(n); });
+            }
+        }
+        if (undone && !bill(b, y, m).full) {                                     
+            Notif last = null; LocalDateTime nowT = LocalDateTime.now();
+            for (Notif n : d.notifs)
+                if (n.bid == id && n.year == y && n.month == m && !n.kind.startsWith("paid") && !n.due.isAfter(nowT)
+                        && (last == null || n.due.isAfter(last.due))) last = n;
+            if (last != null && last.sent != 0) { last.sent = 0; final Notif re = last; db(() -> BoardingDatabase.updateNotif(re)); }
         }
     }
 
@@ -246,9 +295,7 @@ public class Shared {
         }
         return changed;
     }
-    /** Each boarder has their own queue of due notifications. A ring of those queues is served in turns:
-     *  take ONE notification from the boarder at the front, then send that boarder to the back of the ring
-     *  (if they still have more). So every boarder gets a turn and nobody is starved. */
+  
     static boolean deliverDue() {
         LocalDateTime now = LocalDateTime.now();
         Map<Integer, List<Notif>> perBoarder = new LinkedHashMap<>();

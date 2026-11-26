@@ -228,7 +228,7 @@ public class BoardingDatabase {
             ps.setString(5, n.msg);
             ps.setString(6, n.due.toString());
             ps.setInt(7, n.sent);
-     
+
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (keys.next()) {
@@ -246,6 +246,24 @@ public class BoardingDatabase {
             ps.setInt(2, n.sent);
             ps.setInt(3, n.id);
             ps.executeUpdate();
+        }
+    }
+
+    // ------------------------------ Reset -----------------------------------
+
+    public static void clearAll() throws SQLException {
+        try (Connection c = connect()) {
+            c.setAutoCommit(false);
+            try (Statement st = c.createStatement()) {
+                st.executeUpdate("DELETE FROM notifs");
+                st.executeUpdate("DELETE FROM readings");
+                st.executeUpdate("DELETE FROM masks");
+                st.executeUpdate("DELETE FROM boarders");
+                c.commit();
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
+            }
         }
     }
 }
